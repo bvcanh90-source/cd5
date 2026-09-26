@@ -699,33 +699,27 @@ async def process_url_api(request: ResolveRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    import sys
     
-    port = int(os.getenv("PORT", 8000))
-    print(f"🚀 Starting server on port {port}")
-    print(f"📊 Config loaded:")
-    print(f"   - Shopee Affiliate ID: {config.SHOPEE_AFFILIATE_ID}")
-    print(f"   - Lazada LiteApp Key: {config.LAZADA_LITEAPP_KEY}")
-    print(f"   - Frontend URL: {config.FRONTEND_URL}")
+    # Lấy PORT từ environment, fallback về 10000 nếu không có
+    port_str = os.getenv("PORT", "10000")
+    try:
+        port = int(port_str)
+    except ValueError:
+        port = 10000
     
-    uvicorn.run(app, host="0.0.0.0", port=port)
-
-import sys
-print("=" * 60, file=sys.stderr)
-print("🚀 APP STARTING - Debug Info", file=sys.stderr)
-print(f"Python version: {sys.version}", file=sys.stderr)
-print(f"PORT env var: {os.getenv('PORT', 'NOT SET')}", file=sys.stderr)
-print(f"RENDER env var: {os.getenv('RENDER', 'NOT SET')}", file=sys.stderr)
-print("=" * 60, file=sys.stderr)
-
-if __name__ == "__main__":
-    import uvicorn
+    host = os.getenv("HOST", "0.0.0.0")
     
-    port = int(os.getenv("PORT", 8000))
-    print(f"🚀 Starting server on port {port}", file=sys.stderr)
-    print(f"📊 Config loaded:", file=sys.stderr)
-    print(f"   - Shopee Affiliate ID: {config.SHOPEE_AFFILIATE_ID}", file=sys.stderr)
-    print(f"   - Lazada LiteApp Key: {config.LAZADA_LITEAPP_KEY}", file=sys.stderr)
-    print(f"   - Frontend URL: {config.FRONTEND_URL}", file=sys.stderr)
+    print(f"🚀 Starting server on {host}:{port}", file=sys.stderr, flush=True)
+    print(f"📊 Shopee Affiliate ID: {config.SHOPEE_AFFILIATE_ID}", file=sys.stderr, flush=True)
+    print(f"📊 Lazada LiteApp Key: {config.LAZADA_LITEAPP_KEY}", file=sys.stderr, flush=True)
     
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
-
+    # log_config=None để tránh lỗi logging trên Render
+    uvicorn.run(
+        app, 
+        host=host, 
+        port=port, 
+        log_level="info",
+        log_config=None,  # ✅ Quan trọng! Tránh lỗi logging
+        access_log=True
+    )
