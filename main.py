@@ -158,9 +158,10 @@ def detect_shopee_url_type(url: str) -> str:
 def clean_shopee_url(url: str) -> str:
     """
     Làm sạch URL Shopee - strategy hybrid (whitelist + blacklist).
+    Tự động normalize product URL về dạng /product/shopid/itemid
     
     Logic:
-    - Product URL → Xóa TẤT CẢ query params
+    - Product URL → Xóa TẤT CẢ query params + Normalize về /product/shopid/itemid
     - Landing page → Xóa TẤT CẢ query params  
     - Shop URL → Xóa TẤT CẢ query params
     - Search/Other → Chỉ giữ whitelist params
@@ -214,6 +215,10 @@ def clean_shopee_url(url: str) -> str:
         # Normalize: remove trailing slash (trừ homepage)
         if clean_url.endswith('/') and parsed.path != '/':
             clean_url = clean_url.rstrip('/')
+        
+        # ✅ MỚI: Tự động normalize product URL
+        if url_type == 'product':
+            clean_url = normalize_shopee_product_url(clean_url)
         
         return clean_url
         
@@ -784,46 +789,35 @@ class ProcessAndNormalizeRequest(BaseModel):
 @app.post("/api/process-url-v2")
 async def process_url_v2_api(request: ProcessAndNormalizeRequest):
     """
-    Process URL với normalize product URL.
+    Process URL với tự động normalize.
     
     Flow:
     1. Resolve short link
-    2. Clean tracking params  
-    3. Normalize product URL (về dạng /product/shopid/itemid)
+    2. Clean tracking params + Auto normalize
     """
     url = normalize_url(request.url)
     
     # Resolve
     resolved_url, platform = await resolve_if_needed(url)
     
-    # Clean
+    # Clean (đã bao gồm normalize cho product URL)
     if platform == 'shopee':
         cleaned_url = clean_shopee_url(resolved_url)
         url_type = detect_shopee_url_type(cleaned_url)
-        
-        # Normalize product URL
-        if url_type == 'product':
-            normalized_url = normalize_shopee_product_url(cleaned_url)
-        else:
-            normalized_url = cleaned_url
     elif platform == 'lazada':
         cleaned_url = clean_lazada_url(resolved_url)
-        normalized_url = cleaned_url
         url_type = None
     else:
         cleaned_url = resolved_url
-        normalized_url = cleaned_url
         url_type = None
     
     return {
         "original_url": request.url,
         "resolved_url": resolved_url,
-        "cleaned_url": cleaned_url,
-        "normalized_url": normalized_url,
+        "cleaned_url": cleaned_url,  # Giờ đã là dạng cuối cùng
         "platform": platform,
         "url_type": url_type
     }
-
 
 # ═══════════════════════════════════════════════════════════
 # 6. MAIN ENTRY POINT
