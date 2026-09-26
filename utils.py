@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 
 # ─── 1. SHOPEE: Resolve & Clean ───────────────────────────────────────
 def resolve_short_link(url: str) -> str:
-    """Follow redirect để lấy link đích cuối cùng"""
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         response = requests.head(url, headers=headers, allow_redirects=True, timeout=10)
@@ -18,7 +17,6 @@ def resolve_short_link(url: str) -> str:
         return url
 
 def clean_shopee_url(url: str) -> str:
-    """Làm sạch link Shopee về dạng chuẩn: /product/{shop_id}/{item_id}? hoặc /m/{landing}?"""
     url = resolve_short_link(url)
     parsed = urllib.parse.urlparse(url)
     
@@ -43,9 +41,7 @@ def clean_shopee_url(url: str) -> str:
 
     return f"https://{parsed.netloc}{path}?"
 
-
 def generate_shopee_an_redir(clean_url: str) -> str:
-    """Tạo link affiliate Shopee dạng an_redir"""
     affiliate_id = "17353410295"
     sub_id = "--17353410295--"
     encoded_url = urllib.parse.quote(clean_url, safe="")
@@ -54,7 +50,6 @@ def generate_shopee_an_redir(clean_url: str) -> str:
 
 # ─── 2. LAZADA: API Sign & Convert ────────────────────────────────────
 def convert_lazada_api(target_url: str) -> str:
-    """Gọi API Lazada Open API để tạo link affiliate"""
     app_key = "105827"
     app_secret = "r8ZMKhPxu1JZUCwTUBVMJiJnZKjhWeQF"
     user_token = "f879c4163b0f4c5a90c1567fcffac91e"
@@ -68,7 +63,6 @@ def convert_lazada_api(target_url: str) -> str:
         "inputValue": target_url,
     }
     
-    # Tạo chữ ký SHA256 theo chuẩn Lazada
     sorted_keys = sorted(params.keys())
     sign_str = app_secret
     for key in sorted_keys:
@@ -85,20 +79,14 @@ def convert_lazada_api(target_url: str) -> str:
             url_list = data.get("data", {}).get("urlBatchGetLinkInfoList", [])
             if url_list:
                 return url_list[0].get("regularPromotionLink", target_url)
-        logger.warning(f"Lazada API response: {data}")
         return target_url
     except Exception as e:
         logger.error(f"Lazada API Error: {e}")
         return target_url
 
 
-# ─── 3. SHORTENER: Rút gọn link ───────────────────────────────────────
+# ─── 3. SHORTENER ─────────────────────────────────────────────────────
 def shorten_link(long_url: str) -> str:
-    """
-    TODO: Thay thế bằng API rút gọn link thực tế của s.salevn.top
-    Ví dụ:
-    res = requests.post("https://s.salevn.top/api/shorten", json={"url": long_url})
-    return res.json()["short_url"]
-    """
-    # Tạm thời trả về chính nó để bạn test luồng API trước
-    return long_url 
+    # TODO: Thay bằng API rút gọn thật của bạn. 
+    # Ví dụ: return requests.post("https://s.salevn.top/api/short", json={"url": long_url}).json()["short_url"]
+    return long_url # Tạm trả về link dài để test luồng
