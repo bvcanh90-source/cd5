@@ -5,10 +5,12 @@ All-in-one file cho Render free tier.
 Sections:
 1. Imports & Constants
 2. Configuration
-3. URL Cleaner (Shopee + Lazada)
-4. Link Resolver (Short links)
-5. FastAPI App
-6. Main Entry Point
+3. URL Cleaner - Shopee
+4. Shopee Converter (an_redir mode)
+5. URL Cleaner - Lazada
+6. Link Resolver
+7. FastAPI App & Endpoints
+8. Main Entry Point
 """
 
 # ═══════════════════════════════════════════════════════════
@@ -17,8 +19,11 @@ Sections:
 
 import os
 import re
+import sys
 from typing import Optional, Tuple, Set, List
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, unquote
+from urllib.parse import (
+    urlparse, parse_qs, urlencode, urlunparse, unquote, quote
+)
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -49,8 +54,8 @@ class Config:
     
     # Lazada LiteApp
     LAZADA_LITEAPP_KEY: str = os.getenv("LAZADA_LITEAPP_KEY", "105827")
-    LAZADA_LITEAPP_SECRET: str = os.getenv("LAZADA_LITEAPP_SECRET", "r8ZMKhPxu1JZUCwTUBVMJiJnZKjhWeQF")
-    LAZADA_USER_TOKEN: str = os.getenv("LAZADA_USER_TOKEN", "f879c4163b0f4c5a90c1567fcffac91e")
+    LAZADA_LITEAPP_SECRET: str = os.getenv("LAZADA_LITEAPP_SECRET", "")
+    LAZADA_USER_TOKEN: str = os.getenv("LAZADA_USER_TOKEN", "")
     LAZADA_AFF_PREFIX: str = os.getenv("LAZADA_AFF_PREFIX", "https://c.lazada.vn/t/c.YParqP")
     
     # Shortener
@@ -77,17 +82,14 @@ config = Config()
 
 
 # ═══════════════════════════════════════════════════════════
-# 3. URL CLEANER - SHOPEE (CẢI TIẾN)
+# 3. URL CLEANER - SHOPEE
 # ═══════════════════════════════════════════════════════════
 
 # Whitelist params cần giữ lại (cho search/other URLs)
 SHOPEE_KEEP_PARAMS: Set[str] = {
-    # Search page
     'keyword', 'sortBy', 'order', 'page', 'limit',
     'priceMin', 'priceMax', 'rating',
-    # Category
     'category', 'categoryId',
-    # Shop
     'shop', 'shopId',
 }
 
@@ -138,7 +140,6 @@ def detect_shopee_url_type(url: str) -> str:
         match = SHOPEE_PATTERNS['product_slug'].match(path)
         if match:
             slug, shop_id, item_id = match.groups()
-            # Kiểm tra shop_id và item_id là số
             if shop_id.isdigit() and item_id.isdigit():
                 return 'product'
         
@@ -155,87 +156,12 @@ def detect_shopee_url_type(url: str) -> str:
         return 'other'
 
 
-def clean_shopee_url(url: str) -> str:
-    """
-    Làm sạch URL Shopee - strategy hybrid (whitelist + blacklist).
-    Tự động normalize product URL về dạng /product/shopid/itemid
-    
-    Logic:
-    - Product URL → Xóa TẤT CẢ query params + Normalize về /product/shopid/itemid
-    - Landing page → Xóa TẤT CẢ query params  
-    - Shop URL → Xóa TẤT CẢ query params
-    - Search/Other → Chỉ giữ whitelist params
-    """
-    if not url:
-        return url
-    
-    try:
-        parsed = urlparse(url)
-        
-        # Chỉ xử lý URL Shopee
-        if 'shopee' not in parsed.netloc.lower():
-            return url
-        
-        # Detect loại URL
-        url_type = detect_shopee_url_type(url)
-        
-        # Parse query string
-        query_params = parse_qs(parsed.query, keep_blank_values=True)
-        
-        # Áp dụng strategy theo loại URL
-        if url_type in ('product', 'landing', 'shop', 'homepage'):
-            # Xóa TẤT CẢ params - không cần bất kỳ tracking nào
-            clean_params = {}
-        elif url_type == 'search':
-            # Search: chỉ giữ whitelist params
-            clean_params = {
-                k: v for k, v in query_params.items()
-                if k.lower() in SHOPEE_KEEP_PARAMS
-            }
-        else:
-            # Other: whitelist params (an toàn nhất)
-            clean_params = {
-                k: v for k, v in query_params.items()
-                if k.lower() in SHOPEE_KEEP_PARAMS
-            }
-        
-        # Rebuild query string
-        new_query = urlencode(clean_params, doseq=True) if clean_params else ""
-        
-        # Rebuild URL
-        clean_url = urlunparse((
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            parsed.params,
-            new_query,
-            ''  # Xóa fragment
-        ))
-        
-        # Normalize: remove trailing slash (trừ homepage)
-        if clean_url.endswith('/') and parsed.path != '/':
-            clean_url = clean_url.rstrip('/')
-        
-        # ✅ MỚI: Tự động normalize product URL
-        if url_type == 'product':
-            clean_url = normalize_shopee_product_url(clean_url)
-        
-        return clean_url
-        
-    except Exception as e:
-        print(f"[clean_shopee_url] Error: {e}")
-        return url
-
-
 def normalize_shopee_product_url(url: str) -> str:
     """
     Chuẩn hóa product URL về dạng chuẩn.
     
     Input:  https://shopee.vn/opaanlp/507867749/19180372828
     Output: https://shopee.vn/product/507867749/19180372828
-    
-    Việc này giúp URL ổn định, tránh duplicate khi cùng 1 sản phẩm
-    có nhiều slug khác nhau.
     """
     try:
         parsed = urlparse(url)
@@ -273,8 +199,104 @@ def normalize_shopee_product_url(url: str) -> str:
     except Exception:
         return url
 
+
+def clean_shopee_url(url: str) -> str:
+    """
+    Làm sạch URL Shopee - strategy hybrid (whitelist + blacklist).
+    Tự động normalize product URL về dạng /product/shopid/itemid
+    """
+    if not url:
+        return url
+    
+    try:
+        parsed = urlparse(url)
+        
+        # Chỉ xử lý URL Shopee
+        if 'shopee' not in parsed.netloc.lower():
+            return url
+        
+        # Detect loại URL
+        url_type = detect_shopee_url_type(url)
+        
+        # Parse query string
+        query_params = parse_qs(parsed.query, keep_blank_values=True)
+        
+        # Áp dụng strategy theo loại URL
+        if url_type in ('product', 'landing', 'shop', 'homepage'):
+            clean_params = {}
+        else:
+            clean_params = {
+                k: v for k, v in query_params.items()
+                if k.lower() in SHOPEE_KEEP_PARAMS
+            }
+        
+        # Rebuild query string
+        new_query = urlencode(clean_params, doseq=True) if clean_params else ""
+        
+        # Rebuild URL
+        clean_url = urlunparse((
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            new_query,
+            ''
+        ))
+        
+        # Normalize: remove trailing slash (trừ homepage)
+        if clean_url.endswith('/') and parsed.path != '/':
+            clean_url = clean_url.rstrip('/')
+        
+        # Tự động normalize product URL
+        if url_type == 'product':
+            clean_url = normalize_shopee_product_url(clean_url)
+        
+        return clean_url
+        
+    except Exception as e:
+        print(f"[clean_shopee_url] Error: {e}", file=sys.stderr)
+        return url
+
+
 # ═══════════════════════════════════════════════════════════
-# 3. URL CLEANER - LAZADA
+# 4. SHOPEE CONVERTER - AN_REDIR MODE
+# ═══════════════════════════════════════════════════════════
+
+def convert_shopee_an_redir(cleaned_url: str, affiliate_id: str, sub_id: str = "") -> str:
+    """
+    Tạo Shopee affiliate link dạng an_redir (không cần cookie).
+    
+    Args:
+        cleaned_url: URL Shopee đã được làm sạch
+        affiliate_id: Shopee Affiliate ID
+        sub_id: Sub ID (mặc định là --{affiliate_id}--)
+    
+    Returns:
+        Link affiliate dạng: https://s.shopee.vn/an_redir?origin_link=...&affiliate_id=...&sub_id=...
+    """
+    if not cleaned_url or not affiliate_id:
+        return cleaned_url
+    
+    # URL encode the cleaned URL
+    encoded_url = quote(cleaned_url, safe='')
+    
+    # Format sub_id nếu không được cung cấp
+    if not sub_id:
+        sub_id = f"--{affiliate_id}--"
+    
+    # Build an_redir URL
+    an_redir_url = (
+        f"https://s.shopee.vn/an_redir"
+        f"?origin_link={encoded_url}"
+        f"&affiliate_id={affiliate_id}"
+        f"&sub_id={sub_id}"
+    )
+    
+    return an_redir_url
+
+
+# ═══════════════════════════════════════════════════════════
+# 5. URL CLEANER - LAZADA
 # ═══════════════════════════════════════════════════════════
 
 LAZADA_REMOVE_PARAMS: Set[str] = {
@@ -298,12 +320,6 @@ LAZADA_REMOVE_PARAMS: Set[str] = {
 def clean_lazada_url(url: str) -> str:
     """
     Làm sạch URL Lazada, loại bỏ tracking parameters.
-    
-    Args:
-        url: URL Lazada gốc
-    
-    Returns:
-        URL Lazada đã được làm sạch
     """
     if not url:
         return url
@@ -334,13 +350,13 @@ def clean_lazada_url(url: str) -> str:
             parsed.path,
             parsed.params,
             new_query,
-            ''  # Xóa fragment
+            ''
         ))
         
         return clean_url
         
     except Exception as e:
-        print(f"[clean_lazada_url] Error: {e}")
+        print(f"[clean_lazada_url] Error: {e}", file=sys.stderr)
         return url
 
 
@@ -378,7 +394,7 @@ def normalize_url(url: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════
-# 4. LINK RESOLVER
+# 6. LINK RESOLVER
 # ═══════════════════════════════════════════════════════════
 
 USER_AGENT = (
@@ -407,15 +423,7 @@ JS_REDIRECT_PATTERNS = [
 
 
 def find_js_redirect(html_body: str) -> Optional[str]:
-    """
-    Tìm URL redirect trong JavaScript hoặc meta refresh.
-    
-    Args:
-        html_body: Nội dung HTML của trang
-    
-    Returns:
-        URL redirect nếu tìm thấy, None nếu không
-    """
+    """Tìm URL redirect trong JavaScript hoặc meta refresh."""
     if not html_body:
         return None
     
@@ -423,7 +431,6 @@ def find_js_redirect(html_body: str) -> Optional[str]:
         match = re.search(pattern, html_body, re.IGNORECASE)
         if match:
             url = match.group(1)
-            # Decode HTML entities
             url = url.replace("&amp;", "&").replace("&#39;", "'").replace("&quot;", '"')
             return url
     
@@ -431,16 +438,7 @@ def find_js_redirect(html_body: str) -> Optional[str]:
 
 
 def extract_url_param(url: str, param_name: str = 'url') -> Optional[str]:
-    """
-    Trích xuất giá trị của một query parameter.
-    
-    Args:
-        url: URL cần trích xuất
-        param_name: Tên parameter (mặc định là 'url')
-    
-    Returns:
-        Giá trị parameter đã decode, hoặc None nếu không tìm thấy
-    """
+    """Trích xuất giá trị của một query parameter."""
     try:
         parsed = urlparse(url)
         params = parse_qs(parsed.query, keep_blank_values=True)
@@ -479,12 +477,7 @@ def is_third_party_host(url: str) -> bool:
 
 
 def detect_platform(url: str) -> Optional[str]:
-    """
-    Detect platform từ URL.
-    
-    Returns:
-        'shopee', 'lazada', hoặc None nếu không xác định
-    """
+    """Detect platform từ URL."""
     if is_shopee_host(url):
         return 'shopee'
     elif is_lazada_host(url):
@@ -500,20 +493,7 @@ async def resolve_short_link(
     """
     Resolve short link về link gốc cuối cùng.
     
-    Hỗ trợ:
-    - HTTP redirects (301, 302, 303, 307, 308)
-    - JavaScript redirects (window.location.href, meta refresh)
-    - Lazada c.lazada.vn/t/ URL với ?url= parameter
-    
-    Args:
-        url: Short link cần resolve
-        max_redirects: Số lần redirect tối đa
-        timeout: Timeout cho mỗi request (giây)
-    
-    Returns:
-        Tuple (final_url, platform)
-        - final_url: Link gốc cuối cùng
-        - platform: 'shopee', 'lazada', hoặc None
+    Hỗ trợ HTTP redirects, JavaScript redirects, và Lazada c.lazada.vn/t/ URLs.
     """
     headers = {
         'User-Agent': USER_AGENT,
@@ -526,14 +506,13 @@ async def resolve_short_link(
     
     async with httpx.AsyncClient(
         timeout=timeout,
-        follow_redirects=False,  # Tự xử lý redirect
-        verify=False,  # Bỏ qua SSL verification
+        follow_redirects=False,
+        verify=False,
         headers=headers
     ) as client:
         
         for attempt in range(max_redirects):
             if current_url in visited:
-                # Loop detected
                 break
             
             visited.add(current_url)
@@ -545,7 +524,6 @@ async def resolve_short_link(
                 if response.status_code in (301, 302, 303, 307, 308):
                     location = response.headers.get('Location', '')
                     if location:
-                        # Handle relative URLs
                         if location.startswith('/'):
                             parsed = urlparse(current_url)
                             current_url = f"{parsed.scheme}://{parsed.netloc}{location}"
@@ -579,10 +557,10 @@ async def resolve_short_link(
                 return current_url, platform
                 
             except httpx.TimeoutException:
-                print(f"[resolve_short_link] Timeout: {current_url}")
+                print(f"[resolve_short_link] Timeout: {current_url}", file=sys.stderr)
                 return None, None
             except Exception as e:
-                print(f"[resolve_short_link] Error: {e}")
+                print(f"[resolve_short_link] Error: {e}", file=sys.stderr)
                 return None, None
     
     # Nếu sau max_redirects vẫn chưa tìm được platform
@@ -593,14 +571,7 @@ async def resolve_short_link(
 async def resolve_if_needed(url: str) -> Tuple[str, Optional[str]]:
     """
     Resolve URL nếu nó là short link, ngược lại trả về URL gốc.
-    
-    Args:
-        url: URL cần kiểm tra
-    
-    Returns:
-        Tuple (resolved_url, platform)
     """
-    # Nếu đã là full URL (không phải short link), trả về ngay
     parsed = urlparse(url)
     host = parsed.netloc.lower()
     
@@ -614,7 +585,6 @@ async def resolve_if_needed(url: str) -> Tuple[str, Optional[str]]:
     )
     
     if not is_short_link:
-        # Không cần resolve
         return url, detect_platform(url)
     
     # Cần resolve
@@ -623,7 +593,7 @@ async def resolve_if_needed(url: str) -> Tuple[str, Optional[str]]:
 
 
 # ═══════════════════════════════════════════════════════════
-# 5. FASTAPI APP
+# 7. FASTAPI APP & ENDPOINTS
 # ═══════════════════════════════════════════════════════════
 
 app = FastAPI(
@@ -642,47 +612,54 @@ app.add_middleware(
 )
 
 
-# ═══════════════════════════════════════════════════════════
-# 5.1 Pydantic Models
-# ═══════════════════════════════════════════════════════════
+# ─── Pydantic Models ───
 
 class URLCleanRequest(BaseModel):
-    """Request model cho API làm sạch URL."""
     url: str
-    platform: Optional[str] = None  # 'shopee', 'lazada', hoặc None (auto-detect)
+    platform: Optional[str] = None
 
 
 class URLCleanResponse(BaseModel):
-    """Response model cho API làm sạch URL."""
     original_url: str
     cleaned_url: str
     platform: Optional[str]
-    url_type: Optional[str]  # 'product', 'landing', 'shop', 'other'
+    url_type: Optional[str]
 
 
 class ResolveRequest(BaseModel):
-    """Request model cho API resolve short link."""
     url: str
 
 
 class ResolveResponse(BaseModel):
-    """Response model cho API resolve short link."""
     original_url: str
     resolved_url: Optional[str]
     platform: Optional[str]
 
 
 class HealthResponse(BaseModel):
-    """Response model cho health check."""
     status: str
     version: str
     shopee_aff_id: str
     lazada_liteapp_key: str
 
 
-# ═══════════════════════════════════════════════════════════
-# 5.2 API Endpoints
-# ═══════════════════════════════════════════════════════════
+class ConvertShopeeRequest(BaseModel):
+    url: str
+    mode: str = "an_redir"
+    affiliate_id: Optional[str] = None
+    sub_id: Optional[str] = None
+
+
+class ConvertShopeeResponse(BaseModel):
+    original_url: str
+    cleaned_url: str
+    affiliate_url: str
+    mode: str
+    platform: str
+    url_type: str
+
+
+# ─── API Endpoints ───
 
 @app.get("/", response_model=HealthResponse)
 async def health_check():
@@ -697,11 +674,7 @@ async def health_check():
 
 @app.post("/api/clean-url", response_model=URLCleanResponse)
 async def clean_url_api(request: URLCleanRequest):
-    """
-    API endpoint để làm sạch URL.
-    
-    Tự động detect platform nếu không chỉ định.
-    """
+    """API endpoint để làm sạch URL."""
     url = normalize_url(request.url)
     
     # Auto-detect platform
@@ -718,7 +691,7 @@ async def clean_url_api(request: URLCleanRequest):
         url_type = detect_shopee_url_type(cleaned_url)
     elif platform == 'lazada':
         cleaned_url = clean_lazada_url(url)
-        url_type = None  # TODO: implement detect_lazada_url_type
+        url_type = None
     else:
         cleaned_url = url
         url_type = None
@@ -733,11 +706,7 @@ async def clean_url_api(request: URLCleanRequest):
 
 @app.post("/api/resolve-url", response_model=ResolveResponse)
 async def resolve_url_api(request: ResolveRequest):
-    """
-    API endpoint để resolve short link về link gốc.
-    
-    Hỗ trợ: s.shopee.vn, shp.ee, s.lazada.vn, c.lazada.vn, third-party domains
-    """
+    """API endpoint để resolve short link về link gốc."""
     url = normalize_url(request.url)
     resolved_url, platform = await resolve_short_link(url)
     
@@ -750,14 +719,7 @@ async def resolve_url_api(request: ResolveRequest):
 
 @app.post("/api/process-url")
 async def process_url_api(request: ResolveRequest):
-    """
-    API endpoint đầy đủ: resolve + clean URL.
-    
-    Flow:
-    1. Resolve short link (nếu cần)
-    2. Clean tracking parameters
-    3. Return cleaned URL
-    """
+    """API endpoint đầy đủ: resolve + clean URL."""
     url = normalize_url(request.url)
     
     # Step 1: Resolve if needed
@@ -782,19 +744,10 @@ async def process_url_api(request: ResolveRequest):
         "url_type": url_type
     }
 
-class ProcessAndNormalizeRequest(BaseModel):
-    url: str
-
 
 @app.post("/api/process-url-v2")
-async def process_url_v2_api(request: ProcessAndNormalizeRequest):
-    """
-    Process URL với tự động normalize.
-    
-    Flow:
-    1. Resolve short link
-    2. Clean tracking params + Auto normalize
-    """
+async def process_url_v2_api(request: ResolveRequest):
+    """Process URL với tự động normalize."""
     url = normalize_url(request.url)
     
     # Resolve
@@ -814,18 +767,69 @@ async def process_url_v2_api(request: ProcessAndNormalizeRequest):
     return {
         "original_url": request.url,
         "resolved_url": resolved_url,
-        "cleaned_url": cleaned_url,  # Giờ đã là dạng cuối cùng
+        "cleaned_url": cleaned_url,
         "platform": platform,
         "url_type": url_type
     }
 
+
+@app.post("/api/convert-shopee", response_model=ConvertShopeeResponse)
+async def convert_shopee_api(request: ConvertShopeeRequest):
+    """
+    Chuyển đổi URL Shopee thành affiliate link.
+    
+    Hỗ trợ 2 chế độ:
+    - an_redir: Không cần cookie, dùng template URL
+    - cookie: Cần cookie Shopee Affiliate (sẽ implement sau)
+    """
+    url = normalize_url(request.url)
+    
+    # Step 1: Resolve
+    resolved_url, platform = await resolve_if_needed(url)
+    
+    if platform != 'shopee':
+        raise HTTPException(
+            status_code=400, 
+            detail=f"URL không phải Shopee. Platform detected: {platform}"
+        )
+    
+    # Step 2: Clean + Normalize
+    cleaned_url = clean_shopee_url(resolved_url)
+    url_type = detect_shopee_url_type(cleaned_url)
+    
+    # Step 3: Convert to affiliate link
+    affiliate_id = request.affiliate_id or config.SHOPEE_AFFILIATE_ID
+    sub_id = request.sub_id or ""
+    
+    if request.mode == "an_redir":
+        affiliate_url = convert_shopee_an_redir(cleaned_url, affiliate_id, sub_id)
+    elif request.mode == "cookie":
+        raise HTTPException(
+            status_code=501,
+            detail="Cookie mode chưa được implement. Vui lòng dùng mode 'an_redir'."
+        )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Mode không hợp lệ: {request.mode}. Chọn 'an_redir' hoặc 'cookie'."
+        )
+    
+    return ConvertShopeeResponse(
+        original_url=request.url,
+        cleaned_url=cleaned_url,
+        affiliate_url=affiliate_url,
+        mode=request.mode,
+        platform=platform,
+        url_type=url_type
+    )
+
+
 # ═══════════════════════════════════════════════════════════
-# 6. MAIN ENTRY POINT
+# 8. MAIN ENTRY POINT
 # ═══════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     import uvicorn
-    import sys
     
     # Lấy PORT từ environment, fallback về 10000 nếu không có
     port_str = os.getenv("PORT", "10000")
@@ -846,6 +850,6 @@ if __name__ == "__main__":
         host=host, 
         port=port, 
         log_level="info",
-        log_config=None,  # ✅ Quan trọng! Tránh lỗi logging
+        log_config=None,
         access_log=True
     )
