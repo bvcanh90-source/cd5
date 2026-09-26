@@ -6,22 +6,27 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
+      # ─── GIÁ TRỊ BÍ MẬT (sync: false) ───
+      # Phải thêm thủ công trên Render UI, KHÔNG commit vào git
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: ADMIN_IDS
         sync: false
       - key: REDIS_URL
         sync: false
+      - key: LAZADA_LITEAPP_SECRET
+        sync: false
+      - key: LAZADA_USER_TOKEN
+        sync: false
+      
+      # ─── GIÁ TRỊ CÔNG KHAI (hardcode) ───
+      # An toàn khi commit vào git
       - key: SHOPEE_AFFILIATE_ID
         value: "17353410295"
       - key: SHOPEE_SUB_ID_TEMPLATE
         value: "--{aff_id}--"
       - key: LAZADA_LITEAPP_KEY
         value: "105827"
-      - key: LAZADA_LITEAPP_SECRET
-        sync: false
-      - key: LAZADA_USER_TOKEN
-        sync: false
       - key: LAZADA_AFF_PREFIX
         value: "https://c.lazada.vn/t/c.YParqP"
       - key: SHORTENER_DB_PATH
