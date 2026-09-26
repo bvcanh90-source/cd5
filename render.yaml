@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: affiliate-toolkit
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SHOPEE_AFFILIATE_ID
+        value: "17353410295"
+      - key: SHOPEE_SUB_ID_TEMPLATE
+        value: "--{aff_id}--"
+      - key: LAZADA_LITEAPP_KEY
+        value: "105827"
+      - key: LAZADA_LITEAPP_SECRET
+        sync: false
+      - key: LAZADA_USER_TOKEN
+        sync: false
+      - key: LAZADA_AFF_PREFIX
+        value: "https://c.lazada.vn/t/c.YParqP"
+      - key: SHORTENER_DB_PATH
+        value: "data/short_links.json"
+      - key: SHORTENER_BASE_URL
+        value: "https://s.salevn.top"
+      - key: FRONTEND_URL
+        value: "https://s.salevn.top"
