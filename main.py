@@ -77,42 +77,93 @@ config = Config()
 
 
 # ═══════════════════════════════════════════════════════════
-# 3. URL CLEANER - SHOPEE
+# 3. URL CLEANER - SHOPEE (CẢI TIẾN)
 # ═══════════════════════════════════════════════════════════
 
-SHOPEE_REMOVE_PARAMS: Set[str] = {
-    # UTM parameters
-    'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
-    # Shopee tracking
-    'uls_trackid', 'credential_token', 'gads_t_sig', 'mmp_pid',
-    'smtt', 'smid', 'sp_at', 'sp_lm', 'sp_rid',
-    'af_siteid', 'pid', 'af_sub1', 'af_sub2', 'af_sub3', 'af_sub4', 'af_sub5',
-    'is_retargeting', 'af_reengagement_window', 'af_sub_siteid',
-    'af_click_lookback', 'af_viewthrough_lookback',
-    'af_dp', 'af_web_dp', 'af_force_deeplink',
-    'share_token', 's_share_source_token',
-    'extraParams', 'spm', 'scm', 'clickid',
+# Whitelist params cần giữ lại (cho search/other URLs)
+SHOPEE_KEEP_PARAMS: Set[str] = {
+    # Search page
+    'keyword', 'sortBy', 'order', 'page', 'limit',
+    'priceMin', 'priceMax', 'rating',
+    # Category
+    'category', 'categoryId',
+    # Shop
+    'shop', 'shopId',
 }
 
-# Regex patterns
-SHOPEE_PRODUCT_PATTERN = re.compile(r'^/product/(\d+)/(\d+)', re.IGNORECASE)
-SHOPEE_LANDING_PATTERN = re.compile(r'^/m/([a-zA-Z0-9\-_]+)', re.IGNORECASE)
-SHOPEE_SHOP_PATTERN = re.compile(r'^/shop/(\d+)/([a-zA-Z0-9\-_]+)', re.IGNORECASE)
+# Regex patterns để nhận diện các dạng URL Shopee
+SHOPEE_PATTERNS = {
+    'product_legacy': re.compile(r'^/product/(\d+)/(\d+)', re.IGNORECASE),
+    'product_slug': re.compile(r'^/([^/]+)/(\d+)/(\d+)$', re.IGNORECASE),
+    'product_named': re.compile(r'/[^/]+-i\.(\d+)\.(\d+)', re.IGNORECASE),
+    'landing': re.compile(r'^/m/([a-zA-Z0-9\-_]+)', re.IGNORECASE),
+    'shop': re.compile(r'^/shop/(\d+)/?([^/]*)', re.IGNORECASE),
+    'search': re.compile(r'^/search/?$', re.IGNORECASE),
+    'homepage': re.compile(r'^/?$', re.IGNORECASE),
+}
+
+
+def detect_shopee_url_type(url: str) -> str:
+    """
+    Phân loại URL Shopee với nhiều dạng khác nhau.
+    
+    Returns:
+        'product' | 'landing' | 'shop' | 'search' | 'homepage' | 'other'
+    """
+    try:
+        parsed = urlparse(url)
+        path = parsed.path
+        
+        # Loại bỏ trailing slash (trừ homepage)
+        if path != '/' and path.endswith('/'):
+            path = path.rstrip('/')
+        
+        # Homepage
+        if SHOPEE_PATTERNS['homepage'].match(path):
+            return 'homepage'
+        
+        # Search
+        if SHOPEE_PATTERNS['search'].match(path):
+            return 'search'
+        
+        # Product legacy: /product/123/456
+        if SHOPEE_PATTERNS['product_legacy'].match(path):
+            return 'product'
+        
+        # Product với tên: /Tên-Sản-Phẩm-i.123.456
+        if SHOPEE_PATTERNS['product_named'].search(path):
+            return 'product'
+        
+        # Product với slug: /shop-slug/123/456
+        match = SHOPEE_PATTERNS['product_slug'].match(path)
+        if match:
+            slug, shop_id, item_id = match.groups()
+            # Kiểm tra shop_id và item_id là số
+            if shop_id.isdigit() and item_id.isdigit():
+                return 'product'
+        
+        # Landing page: /m/VoucherXtra
+        if SHOPEE_PATTERNS['landing'].match(path):
+            return 'landing'
+        
+        # Shop: /shop/123/shop-name
+        if SHOPEE_PATTERNS['shop'].match(path):
+            return 'shop'
+        
+        return 'other'
+    except Exception:
+        return 'other'
 
 
 def clean_shopee_url(url: str) -> str:
     """
-    Làm sạch URL Shopee, loại bỏ tracking parameters.
+    Làm sạch URL Shopee - strategy hybrid (whitelist + blacklist).
     
-    Args:
-        url: URL Shopee gốc (có thể chứa tracking)
-    
-    Returns:
-        URL Shopee đã được làm sạch
-        
-    Examples:
-        Input:  https://shopee.vn/product/244551815/26714201843?utm_source=...
-        Output: https://shopee.vn/product/244551815/26714201843
+    Logic:
+    - Product URL → Xóa TẤT CẢ query params
+    - Landing page → Xóa TẤT CẢ query params  
+    - Shop URL → Xóa TẤT CẢ query params
+    - Search/Other → Chỉ giữ whitelist params
     """
     if not url:
         return url
@@ -124,14 +175,28 @@ def clean_shopee_url(url: str) -> str:
         if 'shopee' not in parsed.netloc.lower():
             return url
         
+        # Detect loại URL
+        url_type = detect_shopee_url_type(url)
+        
         # Parse query string
         query_params = parse_qs(parsed.query, keep_blank_values=True)
         
-        # Filter out tracking params
-        clean_params = {
-            k: v for k, v in query_params.items()
-            if k.lower() not in SHOPEE_REMOVE_PARAMS
-        }
+        # Áp dụng strategy theo loại URL
+        if url_type in ('product', 'landing', 'shop', 'homepage'):
+            # Xóa TẤT CẢ params - không cần bất kỳ tracking nào
+            clean_params = {}
+        elif url_type == 'search':
+            # Search: chỉ giữ whitelist params
+            clean_params = {
+                k: v for k, v in query_params.items()
+                if k.lower() in SHOPEE_KEEP_PARAMS
+            }
+        else:
+            # Other: whitelist params (an toàn nhất)
+            clean_params = {
+                k: v for k, v in query_params.items()
+                if k.lower() in SHOPEE_KEEP_PARAMS
+            }
         
         # Rebuild query string
         new_query = urlencode(clean_params, doseq=True) if clean_params else ""
@@ -146,8 +211,8 @@ def clean_shopee_url(url: str) -> str:
             ''  # Xóa fragment
         ))
         
-        # Normalize path (remove trailing slash for product/landing)
-        if clean_url.endswith('/') and not clean_url.endswith('/m/'):
+        # Normalize: remove trailing slash (trừ homepage)
+        if clean_url.endswith('/') and parsed.path != '/':
             clean_url = clean_url.rstrip('/')
         
         return clean_url
@@ -157,31 +222,51 @@ def clean_shopee_url(url: str) -> str:
         return url
 
 
-def detect_shopee_url_type(url: str) -> str:
+def normalize_shopee_product_url(url: str) -> str:
     """
-    Phân loại URL Shopee.
+    Chuẩn hóa product URL về dạng chuẩn.
     
-    Returns:
-        'product' - trang sản phẩm
-        'landing' - landing page (/m/...)
-        'shop' - trang shop
-        'other' - không xác định
+    Input:  https://shopee.vn/opaanlp/507867749/19180372828
+    Output: https://shopee.vn/product/507867749/19180372828
+    
+    Việc này giúp URL ổn định, tránh duplicate khi cùng 1 sản phẩm
+    có nhiều slug khác nhau.
     """
     try:
         parsed = urlparse(url)
         path = parsed.path
         
-        if SHOPEE_PRODUCT_PATTERN.match(path):
-            return 'product'
-        elif SHOPEE_LANDING_PATTERN.match(path):
-            return 'landing'
-        elif SHOPEE_SHOP_PATTERN.match(path):
-            return 'shop'
-        else:
-            return 'other'
+        if path.endswith('/'):
+            path = path.rstrip('/')
+        
+        # Match dạng /slug/shopid/itemid
+        match = SHOPEE_PATTERNS['product_slug'].match(path)
+        if match:
+            slug, shop_id, item_id = match.groups()
+            if shop_id.isdigit() and item_id.isdigit():
+                new_path = f"/product/{shop_id}/{item_id}"
+                return urlunparse((
+                    parsed.scheme,
+                    parsed.netloc,
+                    new_path,
+                    '', '', ''
+                ))
+        
+        # Match dạng /Tên-Sản-Phẩm-i.123.456
+        match = SHOPEE_PATTERNS['product_named'].search(path)
+        if match:
+            shop_id, item_id = match.groups()
+            new_path = f"/product/{shop_id}/{item_id}"
+            return urlunparse((
+                parsed.scheme,
+                parsed.netloc,
+                new_path,
+                '', '', ''
+            ))
+        
+        return url
     except Exception:
-        return 'other'
-
+        return url
 
 # ═══════════════════════════════════════════════════════════
 # 3. URL CLEANER - LAZADA
@@ -688,6 +773,53 @@ async def process_url_api(request: ResolveRequest):
         "original_url": request.url,
         "resolved_url": resolved_url,
         "cleaned_url": cleaned_url,
+        "platform": platform,
+        "url_type": url_type
+    }
+
+class ProcessAndNormalizeRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/process-url-v2")
+async def process_url_v2_api(request: ProcessAndNormalizeRequest):
+    """
+    Process URL với normalize product URL.
+    
+    Flow:
+    1. Resolve short link
+    2. Clean tracking params  
+    3. Normalize product URL (về dạng /product/shopid/itemid)
+    """
+    url = normalize_url(request.url)
+    
+    # Resolve
+    resolved_url, platform = await resolve_if_needed(url)
+    
+    # Clean
+    if platform == 'shopee':
+        cleaned_url = clean_shopee_url(resolved_url)
+        url_type = detect_shopee_url_type(cleaned_url)
+        
+        # Normalize product URL
+        if url_type == 'product':
+            normalized_url = normalize_shopee_product_url(cleaned_url)
+        else:
+            normalized_url = cleaned_url
+    elif platform == 'lazada':
+        cleaned_url = clean_lazada_url(resolved_url)
+        normalized_url = cleaned_url
+        url_type = None
+    else:
+        cleaned_url = resolved_url
+        normalized_url = cleaned_url
+        url_type = None
+    
+    return {
+        "original_url": request.url,
+        "resolved_url": resolved_url,
+        "cleaned_url": cleaned_url,
+        "normalized_url": normalized_url,
         "platform": platform,
         "url_type": url_type
     }
