@@ -824,11 +824,7 @@ async def process_url_v2_api(request: ResolveRequest):
 @app.post("/api/convert-shopee", response_model=ConvertShopeeResponse)
 async def convert_shopee_api(request: ConvertShopeeRequest):
     """
-    Chuyển đổi URL Shopee thành affiliate link.
-    
-    Hỗ trợ 2 chế độ:
-    - an_redir: Không cần cookie, dùng template URL
-    - cookie: Cần cookie Shopee Affiliate (sẽ implement sau)
+    Chuyển đổi URL Shopee thành affiliate link và rút gọn.
     """
     url = normalize_url(request.url)
     
@@ -845,32 +841,35 @@ async def convert_shopee_api(request: ConvertShopeeRequest):
     cleaned_url = clean_shopee_url(resolved_url)
     url_type = detect_shopee_url_type(cleaned_url)
     
-    # Step 3: Convert to affiliate link
+    # Step 3: Convert to affiliate link (an_redir)
     affiliate_id = request.affiliate_id or config.SHOPEE_AFFILIATE_ID
     sub_id = request.sub_id or ""
     
     if request.mode == "an_redir":
-        affiliate_url = convert_shopee_an_redir(cleaned_url, affiliate_id, sub_id)
+        long_affiliate_url = convert_shopee_an_redir(cleaned_url, affiliate_id, sub_id)
     elif request.mode == "cookie":
         raise HTTPException(
             status_code=501,
-            detail="Cookie mode chưa được implement. Vui lòng dùng mode 'an_redir'."
+            detail="Cookie mode chưa được implement."
         )
     else:
         raise HTTPException(
             status_code=400,
-            detail=f"Mode không hợp lệ: {request.mode}. Chọn 'an_redir' hoặc 'cookie'."
+            detail=f"Mode không hợp lệ: {request.mode}."
         )
+    
+    # Step 4: Rút gọn link qua s.salevn.top
+    short_url = await shorten_url(long_affiliate_url)
+    final_url = short_url if short_url else long_affiliate_url  # Fallback nếu lỗi
     
     return ConvertShopeeResponse(
         original_url=request.url,
         cleaned_url=cleaned_url,
-        affiliate_url=affiliate_url,
+        affiliate_url=final_url,  # ← Giờ là link rút gọn!
         mode=request.mode,
         platform=platform,
         url_type=url_type
     )
-
 
 # ═══════════════════════════════════════════════════════════
 # 8. MAIN ENTRY POINT
