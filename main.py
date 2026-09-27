@@ -64,6 +64,10 @@ class Config:
     
     # Frontend
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://s.salevn.top")
+
+    # Shortener API
+    SHORTENER_API_URL: str = os.getenv("SHORTENER_API_URL", "https://s.salevn.top/api.php")
+    SHORTENER_API_SECRET: str = os.getenv("SHORTENER_API_SECRET", "")
     
     @classmethod
     def get_admin_id_list(cls) -> List[int]:
@@ -79,10 +83,6 @@ class Config:
 
 # Singleton config instance
 config = Config()
-
-# Shortener API
-    SHORTENER_API_URL: str = os.getenv("SHORTENER_API_URL", "https://s.salevn.top/api.php")
-    SHORTENER_API_SECRET: str = os.getenv("SHORTENER_API_SECRET", "")
 
 # ═══════════════════════════════════════════════════════════
 # 3. URL CLEANER - SHOPEE
