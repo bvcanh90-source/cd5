@@ -80,6 +80,9 @@ class Config:
 # Singleton config instance
 config = Config()
 
+# Shortener API
+    SHORTENER_API_URL: str = os.getenv("SHORTENER_API_URL", "https://s.salevn.top/api.php")
+    SHORTENER_API_SECRET: str = os.getenv("SHORTENER_API_SECRET", "")
 
 # ═══════════════════════════════════════════════════════════
 # 3. URL CLEANER - SHOPEE
@@ -294,7 +297,52 @@ def convert_shopee_an_redir(cleaned_url: str, affiliate_id: str, sub_id: str = "
     
     return an_redir_url
 
+# ═══════════════════════════════════════════════════════════
+# 4B. URL SHORTENER (gọi sang hosting PHP)
+# ═══════════════════════════════════════════════════════════
 
+async def shorten_url(long_url: str) -> Optional[str]:
+    """
+    Gửi link dài sang api.php trên s.salevn.top để rút gọn.
+    
+    Args:
+        long_url: Link affiliate dài (vd: https://s.shopee.vn/an_redir?...)
+    
+    Returns:
+        Link rút gọn (vd: https://s.salevn.top/aB3xY), hoặc None nếu lỗi
+    """
+    if not config.SHORTENER_API_SECRET:
+        print("[shorten_url] API_SECRET chưa cấu hình!", file=sys.stderr)
+        return None
+    
+    payload = {
+        "secret": config.SHORTENER_API_SECRET,
+        "long_url": long_url
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                config.SHORTENER_API_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success") and data.get("short_url"):
+                    print(f"[shorten_url] OK: {long_url[:60]}... → {data['short_url']}", 
+                          file=sys.stderr)
+                    return data["short_url"]
+            
+            print(f"[shorten_url] Error: {response.status_code} - {response.text[:200]}", 
+                  file=sys.stderr)
+            return None
+            
+    except Exception as e:
+        print(f"[shorten_url] Exception: {e}", file=sys.stderr)
+        return None
+        
 # ═══════════════════════════════════════════════════════════
 # 5. URL CLEANER - LAZADA
 # ═══════════════════════════════════════════════════════════
